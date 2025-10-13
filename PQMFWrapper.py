@@ -6,10 +6,9 @@ from pqmf import CachedPQMF
 import os
 
 # Diretórios
-audio_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'audios')
 script_dir = os.path.dirname(os.path.abspath(__file__))
-test_dir = os.path.join(script_dir, "audio")
-os.makedirs(test_dir, exist_ok=True)
+audio_dir = os.path.join(script_dir, "audio")
+os.makedirs(audio_dir, exist_ok=True)
 torchscript_dir = os.path.join(script_dir, "torchscript")
 os.makedirs(torchscript_dir, exist_ok=True)
 
@@ -110,7 +109,7 @@ if __name__ == "__main__":
     loaded.eval()
 
     # Testa o modelo
-    wav_path = os.path.join(audio_dir, 'trill_major_second_up/Vn-trill_maj_second-A3-mf-4c-N.wav')
+    wav_path = os.path.join(audio_dir, 'violin_bow_nonvib_f4_44100.wav')
     wav, sr = torchaudio.load(wav_path)
     if wav.dim() == 2 and wav.shape[0] > 1:
         wav = wav[0].unsqueeze(0)  # Usa apenas o primeiro canal
@@ -132,5 +131,5 @@ if __name__ == "__main__":
         print(f"Process output shapes: {[t.shape for t in process]}")
 
     reconstructed_2d = reconstructed.squeeze(0).squeeze(0).unsqueeze(0)  # [1, samples]
-    torchaudio.save(os.path.join(test_dir, "reconstruido.wav"), reconstructed_2d.cpu(), sr)
-    print(f"Áudio reconstruído salvo em {os.path.join(test_dir, 'reconstruido.wav')}")
+    torchaudio.save(os.path.join(audio_dir, "reconstruido.wav"), reconstructed_2d.cpu(), sr)
+    print(f"Áudio reconstruído salvo em {os.path.join(audio_dir, 'reconstruido.wav')}")
