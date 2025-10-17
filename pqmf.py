@@ -322,7 +322,7 @@ class CachedPQMF(PQMF):
             bias=False,
         )
         self.forward_conv.weight.data.copy_(hkf)
-
+ 
         self.inverse_conv = cc.Conv1d(
             hki.shape[1],
             hki.shape[0],
@@ -351,4 +351,4 @@ class CachedPQMF(PQMF):
         x = x.permute(0, 2, 1)
         x = x.reshape(x.shape[0], x.shape[1], -1, m).permute(0, 2, 1, 3)
         x = x.reshape(x.shape[0], x.shape[1], -1)
-        return x
+        return x 

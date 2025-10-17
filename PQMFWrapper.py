@@ -38,7 +38,7 @@ class PQMFWrapper(nn.Module):
         self.process_in_ch = 1
         self.process_out_ch = 2
         self.m_buffer_size = m_buffer_size
-        self.max_buffer_size = 8192
+        self.max_buffer_size = 16384
 
     @torch.jit.export
     def get_methods(self) -> List[str]:
@@ -95,7 +95,7 @@ class PQMFWrapper(nn.Module):
 # --- Exportação TorchScript ---
 if __name__ == "__main__":
     print("Exportando PQMFWrapper para TorchScript...")
-    wrapper = PQMFWrapper(attenuation=100, n_band=16, m_buffer_size=1024)
+    wrapper = PQMFWrapper(attenuation=100, n_band=16, m_buffer_size=8192)
     wrapper.eval()
 
     # Exporta para TorchScript
