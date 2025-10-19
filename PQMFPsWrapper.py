@@ -47,9 +47,10 @@ class PQMFPitchShiftWrapper(nn.Module):
         self.max_buffer_size = 8192
 
         # Calcula a taxa de amostragem de cada sub-banda
-        sub_band_sample_rate = int(self.sample_rate // max(1, self.n_band))
+        # sub_band_sample_rate = int(self.sample_rate // max(1, self.n_band))
+        sub_band_sample_rate = int(round(float(self.sample_rate) / float(max(1, self.n_band))))
 
-        # Define os valores de transposição para cada banda
+        # Define os valores de transposição para cada bandaå
         if shifts_in_semitones is None:
             # Se nenhum valor for fornecido, cria uma escala cromática ascendente
             self.shifts = list(range(n_band))
@@ -147,26 +148,11 @@ class PQMFPitchShiftWrapper(nn.Module):
 if __name__ == "__main__":
     print("Exportando PQMFPitchShiftWrapper para TorchScript...")
 
-    shifts = [random.uniform(-24.53, 12.32) for _ in range(16)]
+    shifts = [random.uniform(-48.53, 12.32) for _ in range(16)]
     print(f"Usando shifts (semitons): {shifts}")
     wrapper = PQMFPitchShiftWrapper(attenuation=100, n_band=16, m_buffer_size=8192, sample_rate=44100, shifts_in_semitones=shifts)
     wrapper.eval()
 
-    # # Inicializa parâmetros preguiçosos (ex.: PitchShift.kernel) com um forward dummy
-    # with torch.no_grad():
-    #     # exemplo de entrada para o wrapper: [B, 1, T]
-    #     example_wave = torch.zeros(1, 1, wrapper.m_buffer_size)
-    #     # inicializa PQMF/sub-bandas
-    #     subbands = wrapper.forward(example_wave)  # [1, n_band, T_sub]
-    #     # inicializa cada PitchShift com shape [B, T_sub] (PitchShift aceita [B,T])
-    #     T_sub = subbands.shape[-1]
-    #     dummy_bt = torch.zeros(1, T_sub)
-    #     for sh in wrapper.pitch_shifters:
-    #         try:
-    #             sh(dummy_bt)
-    #         except Exception:
-    #             # ignora casos em que o processor exige outra forma; objetivo é forçar init
-    #             pass
 
     # # Exporta para TorchScript
     # scripted = torch.jit.script(wrapper)
