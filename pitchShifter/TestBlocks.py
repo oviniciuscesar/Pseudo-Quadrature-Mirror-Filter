@@ -2,6 +2,7 @@ import os
 import torch
 import torchaudio
 import argparse
+import math
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
 audio_dir = os.path.join(script_dir, "audio")
@@ -24,12 +25,32 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("input", help="arquivo de entrada (wav) em audio/")
     p.add_argument("--block", type=int, default=4096, help="tamanho do bloco (PD)")
+    p.add_argument("--overlap", type=int, default=None, help="número de amostras de overlap entre blocos (default block//2)")
     p.add_argument("--ts", type=str, default=os.path.join(torchscript_dir, "pqmfpvoc.ts"), help="caminho do .ts")
     p.add_argument("--out_prefix", type=str, default="_pdstream", help="prefixo de saída em audio/")
     args = p.parse_args()
 
     wav, sr = load_mono(args.input)
-    wav, pad = pad_to_multiple(wav, args.block)
+    # wav, pad = pad_to_multiple(wav, args.block)
+    # window = torch.hann_window(args.block, dtype=wav.dtype, device=wav.device).unsqueeze(0)  # shape [1, block]
+    # total_len = wav.shape[-1]
+    overlap = args.overlap if args.overlap is not None else (args.block // 2)
+    if overlap < 0 or overlap >= args.block:
+        raise ValueError("overlap deve estar em [0, block-1]")
+    hop = args.block - overlap
+
+    L = wav.shape[-1]
+    if L <= args.block:
+        n_frames = 1
+    else:
+        n_frames = int(math.ceil((L - args.block) / float(hop))) + 1
+    total_needed = (n_frames - 1) * hop + args.block
+    pad = total_needed - L
+    if pad > 0:
+        wav = torch.nn.functional.pad(wav, (0, pad))
+
+    # janela Hann do tamanho do bloco
+    window = torch.hann_window(args.block, dtype=wav.dtype, device=wav.device).unsqueeze(0)  # shape [1, block]
     total_len = wav.shape[-1]
     print(f"Loaded {args.input}: shape={wav.shape}, sr={sr}, pad={pad}")
 
@@ -38,34 +59,87 @@ def main():
     loaded.eval()
 
     # stream em blocos
-    out_blocks = []
-    recon_blocks = []
+    # out_blocks = []
+    # recon_blocks = []
+
+    out_accum = torch.zeros(1, total_len, dtype=wav.dtype, device=wav.device)
+    norm_accum = torch.zeros_like(out_accum)
+    recon_accum = torch.zeros_like(out_accum)
+
+    # with torch.no_grad():
+    #     for i in range(0, total_len, args.block):
+    #         blk = wav[:, i:i+args.block]  # [1, block]
+    #         blk = blk * window          # aplicar janela
+    #         # chama pitchshifter (processamento por bloco)
+    #         try:
+    #             out = loaded.pitchshifter(blk)   # espera [B,1,T] output
+    #         except Exception as e:
+    #             # fallback: tentar forward+inverse como sanity check
+    #             print(f"pitchshifter falhou no bloco {i}: {e}; tentando forward+inverse")
+    #             sub = loaded.forward(blk)        # [1, n_band, T_sub]
+    #             out = loaded.inverse(sub)       # [1,1,T]
+    #         # garantir shape [1, T]
+    #         if out.dim() == 3 and out.shape[1] == 1:
+    #             out = out.squeeze(1)
+    #         out_blocks.append(out)
+
+    #         # opcional: testar apenas forward->inverse roundtrip
+    #         subbands = loaded.forward(blk)
+    #         rec = loaded.inverse(subbands)
+    #         if rec.dim() == 3 and rec.shape[1] == 1:
+    #             rec = rec.squeeze(1)
+    #         recon_blocks.append(rec)
+
+    # # concatena blocos e remove padding
+    # pitch_stream = torch.cat(out_blocks, dim=-1)[:, : wav.shape[-1] - pad]
+    # recon_stream = torch.cat(recon_blocks, dim=-1)[:, : wav.shape[-1] - pad]
+
     with torch.no_grad():
-        for i in range(0, total_len, args.block):
+        for frame_idx in range(n_frames):
+            i = frame_idx * hop
             blk = wav[:, i:i+args.block]  # [1, block]
+            blk_win = blk * window        # aplicar janela de análise
+
             # chama pitchshifter (processamento por bloco)
             try:
-                out = loaded.pitchshifter(blk)   # espera [B,1,T] output
+                out = loaded.pitchshifter(blk_win)   # espera [B, T] ou [B,1,T]
             except Exception as e:
-                # fallback: tentar forward+inverse como sanity check
                 print(f"pitchshifter falhou no bloco {i}: {e}; tentando forward+inverse")
-                sub = loaded.forward(blk)        # [1, n_band, T_sub]
-                out = loaded.inverse(sub)       # [1,1,T]
-            # garantir shape [1, T]
+                sub = loaded.forward(blk_win)
+                out = loaded.inverse(sub)
+
+            # normalizar shapes: queremos [1, block]
             if out.dim() == 3 and out.shape[1] == 1:
                 out = out.squeeze(1)
-            out_blocks.append(out)
+            if out.dim() == 2 and out.size(1) != args.block:
+                # trunc/pad centralizado para block (segurança)
+                cur = out.size(1)
+                if cur > args.block:
+                    start = (cur - args.block) // 2
+                    out = out[:, start:start+args.block]
+                else:
+                    pad_l = (args.block - cur) // 2
+                    pad_r = args.block - cur - pad_l
+                    out = torch.nn.functional.pad(out, (pad_l, pad_r))
 
-            # opcional: testar apenas forward->inverse roundtrip
-            subbands = loaded.forward(blk)
+            # acumular com janela de síntese (usar mesma janela)
+            out_accum[:, i:i+args.block] += out * window
+            norm_accum[:, i:i+args.block] += (window * window)
+
+            # opcional: forward->inverse roundtrip para avaliação
+            subbands = loaded.forward(blk_win)
             rec = loaded.inverse(subbands)
             if rec.dim() == 3 and rec.shape[1] == 1:
                 rec = rec.squeeze(1)
-            recon_blocks.append(rec)
+            recon_accum[:, i:i+args.block] += rec * window
+    # finalizar OLA: evitar divisão por zero
+    eps = 1e-8
+    pitch_stream_full = out_accum / (norm_accum + eps)
+    recon_stream_full = recon_accum / (norm_accum + eps)
 
-    # concatena blocos e remove padding
-    pitch_stream = torch.cat(out_blocks, dim=-1)[:, : wav.shape[-1] - pad]
-    recon_stream = torch.cat(recon_blocks, dim=-1)[:, : wav.shape[-1] - pad]
+    # remover padding adicionado antes (pad calculado acima)
+    pitch_stream = pitch_stream_full[:, : (total_len - pad)]
+    recon_stream = recon_stream_full[:, : (total_len - pad)]
 
     # processamento full (não por blocos) para comparação
     with torch.no_grad():

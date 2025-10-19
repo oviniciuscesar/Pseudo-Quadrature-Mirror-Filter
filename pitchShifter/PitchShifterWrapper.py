@@ -109,7 +109,6 @@ class PQMFPitchShiftWrapper(nn.Module):
         self._methods = ["forward", "inverse", "pitchshifter", "process"]
         self._attributes = ["n_band", "attenuation",
                             "forward_in_ch", "forward_out_ch",
-                            "inverse_in_ch", "inverse_out_ch",
                             "pitchshifter_in_ch", "pitchshifter_out_ch",
                             "m_buffer_size", "max_buffer_size"]
         
@@ -171,8 +170,8 @@ class PQMFPitchShiftWrapper(nn.Module):
     def get_attributes(self) -> List[str]:
         return self._attributes
     
-    @torch.jit.export
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    
+    def decompose(self, x: torch.Tensor) -> torch.Tensor:
         """
         Decomposição do sinal mono em sub-bandas.
         Args:
@@ -187,7 +186,7 @@ class PQMFPitchShiftWrapper(nn.Module):
         else:
             raise ValueError("Entrada deve ser [1, buffer_size] ou [batch, 1, buffer_size]")
 
-    @torch.jit.export
+    
     def inverse(self, x: torch.Tensor) -> torch.Tensor:
         """
         Reconstrução do sinal mono a partir das sub-bandas.
@@ -200,6 +199,9 @@ class PQMFPitchShiftWrapper(nn.Module):
             return self.pqmf.inverse(x)
         else:
             raise ValueError(f"Entrada deve ser [batch, {self.n_band}, buffer_size'] ou [1, {self.n_band}, buffer_size']")
+    @torch.jit.export
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.decompose(x)
     
     @torch.jit.export
     def pitchshifter(self, x: torch.Tensor) -> torch.Tensor:
@@ -250,8 +252,10 @@ class PQMFPitchShiftWrapper(nn.Module):
         # print("pitchshifter: shifted_subbands.shape=" + str(list(shifted_subbands.shape)))
         reconstructed = self.inverse(shifted_subbands)  # [B, 1, T]
         # print("pitchshifter: reconstructed.shape=" + str(list(reconstructed.shape)))
+        if reconstructed.dim() == 3 and reconstructed.size(1) == 1:
+            reconstructed = reconstructed.squeeze(1)  # [B, T]
         return reconstructed
-    
+
     @torch.jit.export
     def process(self, x: torch.Tensor) -> torch.Tensor:
         return self.pitchshifter(x) 
@@ -262,7 +266,7 @@ class PQMFPitchShiftWrapper(nn.Module):
 if __name__ == "__main__":
     print("Exportando PQMFPitchShiftWrapper para TorchScript...")
 
-    shifts = [random.uniform(-48.53, 12.32) for _ in range(16)]
+    shifts = [random.uniform(0, 0) for _ in range(16)]
     print(f"Usando shifts (semitons): {shifts}")
     wrapper = PQMFPitchShiftWrapper(attenuation=100, n_band=16, m_buffer_size=8192, sample_rate=44100, shifts_in_semitones=shifts)
     wrapper.eval()
