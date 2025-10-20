@@ -4,4 +4,5 @@ Implementation of the PQMF (Pseudo Quadrature Mirror Filter) filter, used for de
 
 1 - Pitch Shifter with Phase-vocoder run:
 1-PitchShifterWrapper.py (create the wrapper and export the torchscript model)
+
 2-TestBlocks.py flute.wav --block 4096 --overlap 2048 (test the exported model simulating real-time processing)
