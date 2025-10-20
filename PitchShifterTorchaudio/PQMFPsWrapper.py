@@ -4,20 +4,26 @@ import torch.nn.functional as F
 import torchaudio
 import torchaudio.transforms as T
 import numpy as np
+import sys, os
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
 from scipy import signal 
-from pqmf import CachedPQMF
+from PQMF.pqmf import CachedPQMF
 from typing import List, Tuple
-import os
 import random
 
 
 
 # Diretórios
 script_dir = os.path.dirname(os.path.abspath(__file__))
-audio_dir = os.path.join(script_dir, "audio")
+project_root = os.path.dirname(script_dir)
+audio_dir = os.path.join(project_root, "audio")
+out_audio = os.path.join(script_dir, "audio")
+out_torchscript = os.path.join(script_dir, "torchscript")
 os.makedirs(audio_dir, exist_ok=True)
-torchscript_dir = os.path.join(script_dir, "torchscript")
-os.makedirs(torchscript_dir, exist_ok=True)
+os.makedirs(out_audio, exist_ok=True)
+os.makedirs(out_torchscript, exist_ok=True)
 
 
 
@@ -187,5 +193,5 @@ if __name__ == "__main__":
         print(f"Process output shapes: {[t.shape for t in shifter]}")
 
     reconstructed_2d = shifter.squeeze(0).squeeze(0).unsqueeze(0)  # [1, samples]
-    torchaudio.save(os.path.join(audio_dir, "reconstruido.wav"), reconstructed_2d.cpu(), sr)
-    print(f"Áudio reconstruído salvo em {os.path.join(audio_dir, 'reconstruido.wav')}")
+    torchaudio.save(os.path.join(out_audio, "reconstruido.wav"), reconstructed_2d.cpu(), sr)
+    print(f"Áudio reconstruído salvo em {os.path.join(out_audio, 'reconstruido.wav')}")
