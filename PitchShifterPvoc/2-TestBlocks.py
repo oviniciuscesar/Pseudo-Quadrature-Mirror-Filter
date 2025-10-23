@@ -4,9 +4,24 @@ import torchaudio
 import argparse
 import math
 
+# script_dir = os.path.dirname(os.path.abspath(__file__))
+# audio_dir = os.path.join(script_dir, "audio")
+# torchscript_dir = os.path.join(script_dir, "torchscript")
+
 script_dir = os.path.dirname(os.path.abspath(__file__))
-audio_dir = os.path.join(script_dir, "audio")
-torchscript_dir = os.path.join(script_dir, "torchscript")
+project_root = os.path.dirname(script_dir)
+audio_dir = os.path.join(project_root, "audio")
+out_audio = os.path.join(script_dir, "audio")
+out_torchscript = os.path.join(script_dir, "torchscript")
+os.makedirs(audio_dir, exist_ok=True)
+os.makedirs(out_audio, exist_ok=True)
+os.makedirs(out_torchscript, exist_ok=True)
+
+def audio_path(name: str) -> str:
+    p = os.path.expanduser(name)
+    if os.path.isabs(p) or os.path.sep in p or os.path.exists(p):
+        return p
+    return os.path.join(audio_dir, p)
 
 def load_mono(path):
     wav, sr = torchaudio.load(path)  # [C, T]
@@ -26,14 +41,15 @@ def main():
     p.add_argument("input", help="arquivo de entrada (wav) em audio/")
     p.add_argument("--block", type=int, default=4096, help="tamanho do bloco (PD)")
     p.add_argument("--overlap", type=int, default=None, help="número de amostras de overlap entre blocos (default block//2)")
-    p.add_argument("--ts", type=str, default=os.path.join(torchscript_dir, "pqmfpvoc.ts"), help="caminho do .ts")
-    p.add_argument("--out_prefix", type=str, default="_pdstream", help="prefixo de saída em audio/")
+    p.add_argument("--ts", type=str, default=os.path.join(out_torchscript, "pqmfpvoc.ts"), help="caminho do .ts")
+    p.add_argument("--out_prefix", type=str, default="blocktest", help="prefixo de saída em audio/")
     args = p.parse_args()
 
-    wav, sr = load_mono(args.input)
-    # wav, pad = pad_to_multiple(wav, args.block)
-    # window = torch.hann_window(args.block, dtype=wav.dtype, device=wav.device).unsqueeze(0)  # shape [1, block]
-    # total_len = wav.shape[-1]
+    in_path = audio_path(args.input)
+    if not os.path.isfile(in_path):
+        raise FileNotFoundError(f"Arquivo não encontrado: {in_path}")
+        
+    wav, sr = load_mono(in_path)
     overlap = args.overlap if args.overlap is not None else (args.block // 2)
     if overlap < 0 or overlap >= args.block:
         raise ValueError("overlap deve estar em [0, block-1]")
@@ -66,34 +82,6 @@ def main():
     norm_accum = torch.zeros_like(out_accum)
     recon_accum = torch.zeros_like(out_accum)
 
-    # with torch.no_grad():
-    #     for i in range(0, total_len, args.block):
-    #         blk = wav[:, i:i+args.block]  # [1, block]
-    #         blk = blk * window          # aplicar janela
-    #         # chama pitchshifter (processamento por bloco)
-    #         try:
-    #             out = loaded.pitchshifter(blk)   # espera [B,1,T] output
-    #         except Exception as e:
-    #             # fallback: tentar forward+inverse como sanity check
-    #             print(f"pitchshifter falhou no bloco {i}: {e}; tentando forward+inverse")
-    #             sub = loaded.forward(blk)        # [1, n_band, T_sub]
-    #             out = loaded.inverse(sub)       # [1,1,T]
-    #         # garantir shape [1, T]
-    #         if out.dim() == 3 and out.shape[1] == 1:
-    #             out = out.squeeze(1)
-    #         out_blocks.append(out)
-
-    #         # opcional: testar apenas forward->inverse roundtrip
-    #         subbands = loaded.forward(blk)
-    #         rec = loaded.inverse(subbands)
-    #         if rec.dim() == 3 and rec.shape[1] == 1:
-    #             rec = rec.squeeze(1)
-    #         recon_blocks.append(rec)
-
-    # # concatena blocos e remove padding
-    # pitch_stream = torch.cat(out_blocks, dim=-1)[:, : wav.shape[-1] - pad]
-    # recon_stream = torch.cat(recon_blocks, dim=-1)[:, : wav.shape[-1] - pad]
-
     with torch.no_grad():
         for frame_idx in range(n_frames):
             i = frame_idx * hop
@@ -102,10 +90,10 @@ def main():
 
             # chama pitchshifter (processamento por bloco)
             try:
-                out = loaded.pitchshifter(blk_win)   # espera [B, T] ou [B,1,T]
+                out = loaded.pitchshift(blk_win)   # espera [B, T] ou [B,1,T]
             except Exception as e:
-                print(f"pitchshifter falhou no bloco {i}: {e}; tentando forward+inverse")
-                sub = loaded.forward(blk_win)
+                print(f"pitchshift falhou no bloco {i}: {e}; tentando forward+inverse")
+                sub = loaded.decompose(blk_win)
                 out = loaded.inverse(sub)
 
             # normalizar shapes: queremos [1, block]
@@ -127,8 +115,8 @@ def main():
             norm_accum[:, i:i+args.block] += (window * window)
 
             # opcional: forward->inverse roundtrip para avaliação
-            subbands = loaded.forward(blk_win)
-            rec = loaded.inverse(subbands)
+            rec = loaded.forward(blk_win)
+            # rec = loaded.inverse(subbands)
             if rec.dim() == 3 and rec.shape[1] == 1:
                 rec = rec.squeeze(1)
             recon_accum[:, i:i+args.block] += rec * window
@@ -155,13 +143,13 @@ def main():
             full_out = None
 
     # salvar resultados
-    os.makedirs(audio_dir, exist_ok=True)
-    torchaudio.save(os.path.join(audio_dir, f"{args.out_prefix}_stream_pitch.wav"), pitch_stream.cpu(), sr)
-    torchaudio.save(os.path.join(audio_dir, f"{args.out_prefix}_stream_recon.wav"), recon_stream.cpu(), sr)
+    os.makedirs(out_audio, exist_ok=True)
+    torchaudio.save(os.path.join(out_audio, f"{args.out_prefix}_pitchshifter.wav"), pitch_stream.cpu(), sr)
+    torchaudio.save(os.path.join(out_audio, f"{args.out_prefix}_recontructed.wav"), recon_stream.cpu(), sr)
     print("Saved stream outputs to audio/")
 
     if full_out is not None:
-        torchaudio.save(os.path.join(audio_dir, f"{args.out_prefix}_full_pitch.wav"), full_out.cpu(), sr)
+        torchaudio.save(os.path.join(out_audio, "nonblock_pitchshifter.wav"), full_out.cpu(), sr)
         print("Saved full-file pitch output to audio/")
 
     # imprimir métricas simples

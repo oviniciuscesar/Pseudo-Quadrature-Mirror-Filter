@@ -159,7 +159,7 @@ def polyphase_inverse(x, hk, rearrange_filter=True):
 
 def classic_forward(x, hk):
     """
-    Implementação do processo de análise (lento)
+    Implementação simples do processo de análise (lento)
     Parameters
     ----------
     x: torch.Tensor
@@ -179,7 +179,7 @@ def classic_forward(x, hk):
 
 def classic_inverse(x, hk):
     """
-    Implementação ingênua do processo de síntese (lento)
+    Implementação simples do processo de síntese (lento)
     Parameters
     ----------
     x: torch.Tensor
