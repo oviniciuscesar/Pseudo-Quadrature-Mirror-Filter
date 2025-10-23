@@ -2,7 +2,7 @@
 
 Implementation of the PQMF (Pseudo Quadrature Mirror Filter) filter, used to decompose signals into sub-bands and reconstruct them. It's primarily intended for digital audio signal processing and machine learning applications. The code is an adaptation of the PQMF used in [acids-ircam's RAVE models](https://github.com/acids-ircam/RAVE).
 
-## Key Features
+## Overview
 
 The PQMF is implemented at `pqmf.py` which includes:
 
@@ -10,10 +10,10 @@ The PQMF is implemented at `pqmf.py` which includes:
 - **Polyphasic Implementation:** A more efficient polyphase version.
 - **Optimized Real-Time Implementation:** Uses cached convolution layers, making it suitable for low-latency, real-time processing.
 
-There is also other implementations and wrappers:
+Other implementations and wrappers:
 
 - **TorchScript Compatible:** Ready for serialized, production-ready models.
-- **[conTorchionist](https://github.com/ecrisufmg/contorchionist) Wrappers:** Allows for easy integration into interactive and experimental workflows.
+- **[conTorchionist](https://github.com/ecrisufmg/contorchionist) compatibles wrappers:** Allows for easy integration into interactive and experimental workflows.
 - **Pitch Shifter implementations**: A phase-vocoder-based pitch shifter and a torchaudio implementation
 
 ### Pitch Shifter with Phase-vocoder:
