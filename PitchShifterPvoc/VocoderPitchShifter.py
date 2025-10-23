@@ -57,6 +57,11 @@ class PhaseVocoderPitchShift(nn.Module):
         win = torch.hann_window(self.win_length)
         self.register_buffer("window", win)
 
+        # state for phase vocoder
+        freq = self.n_fft // 2 + 1
+        self.register_buffer("last_phase", torch.zeros(1, freq, 1))
+
+
     def _stft(self, x: torch.Tensor) -> torch.Tensor:
         """Return real/imag stft: shape [B, freq, frames, 2]"""
 
@@ -65,13 +70,7 @@ class PhaseVocoderPitchShift(nn.Module):
             x = x.unsqueeze(0)
         B, T = x.shape
         print("_stft: B=" + str(B) + " T=" + str(T) + " n_fft=" + str(self.n_fft) + " win_length=" + str(self.win_length) + " hop_length=" + str(self.hop_length))
-        # if T < 1:
-        #     # return an empty-shaped stft compatible tensor: [B, n_fft//2+1, 0, 2]
-        #     freq = self.n_fft // 2 + 1
-        #     return torch.zeros(B, freq, 0, 2, device=x.device, dtype=x.dtype)
-        # if T < self.win_length:
-        #     pad = int(self.win_length - T)
-        #     x = F.pad(x, (0, pad), mode="constant", value=0.0)
+        
         if T < max(1, self.n_fft):
             pad = int(max(1, self.n_fft) - T)
             print("_stft: padding input pad=" + str(pad))
@@ -165,65 +164,81 @@ class PhaseVocoderPitchShift(nn.Module):
 
     def _phase_vocoder(self, mag: torch.Tensor, phase: torch.Tensor, rate: float) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        Perform phase vocoder time-stretching on magnitude/phase.
-        mag, phase: [B, freq, frames]
-        rate: >0.0  (e.g. rate = 1.5 speeds up 50%; frames_out = int(frames / rate))
-        returns (mag_stretch, phase_stretch) with frames_out
+        Stateful phase vocoder.
         """
         B, freq, frames = mag.shape
-        # time positions in original frames to sample from
-        # frames_new = int(math.floor(frames / rate))  # target number of frames
-        # We'll build positions t' = torch.arange(0, frames, step=rate)
-        # But using float step in torch.arange might accumulate fp error; compute count
-        frames_f = float(frames)
-        frames_out = int(math.floor((frames_f) / rate))
-        if frames_out < 1:
-            frames_out = 1
+        if frames == 0:
+            return mag, phase
+            
+        frames_out = int(round(frames / rate))
+        if frames_out == 0:
+            return torch.zeros_like(mag[:,:,:0]), torch.zeros_like(phase[:,:,:0])
 
-        device = mag.device
+        if frames <= 1:
+            mag_out = mag.repeat(1,1,frames_out)
+            phase_out = torch.zeros_like(mag_out)
+            
+            if self.last_phase.numel() > 1 and self.last_phase.shape == (B, freq, 1):
+                phase_accum = self.last_phase.squeeze(-1) # [B, freq]
+            else: # first block
+                phase_accum = phase[..., 0]
 
-        # omega: expected phase advance for each bin
-        # omega shape: (freq, )
-        k = torch.arange(0, freq, device=device, dtype=mag.dtype)
-        omega = 2.0 * math.pi * k * float(self.hop_length) / float(self.n_fft)  # [freq]
+            k = torch.arange(0, freq, device=mag.device, dtype=mag.dtype)
+            omega = 2.0 * math.pi * k * float(self.hop_length) / float(self.n_fft) # [F]
 
-        # prepare output tensors
-        mag_stretch = torch.zeros((B, freq, frames_out), dtype=mag.dtype, device=device)
-        phase_stretch = torch.zeros((B, freq, frames_out), dtype=phase.dtype, device=device)
+            for j in range(frames_out):
+                phase_out[..., j] = phase_accum
+                phase_accum += omega
+            
+            self.last_phase = phase_accum.unsqueeze(-1).clone()
+            return mag_out, phase_out
 
-        # precompute frame positions (float) and integer parts
-        # t_prime = [i * rate for i in range(frames_out)] but that's sampling original frames at new positions
-        # we want mapping new -> old: t = i * rate
-        t_prime = (torch.arange(0, frames_out, device=device, dtype=mag.dtype) * rate)  # floats
+        # expected phase advance
+        k = torch.arange(0, freq, device=mag.device, dtype=mag.dtype)
+        omega = 2.0 * math.pi * k * float(self.hop_length) / float(self.n_fft) # [F]
+        
+        # phase derivative (instantaneous frequency)
+        phase_d = phase[..., 1:] - phase[..., :-1]
+        phase_d = _principal_angle(phase_d - omega.unsqueeze(0).unsqueeze(-1)) # [B, F, T-1]
 
-        # floor indices
-        t0 = torch.floor(t_prime).to(torch.long)  # [frames_out]
-        t1 = t0 + 1
-        t1 = torch.clamp(t1, max=frames - 1)
-        alpha = (t_prime - t0.to(mag.dtype)).unsqueeze(0).unsqueeze(0)  # [1,1,frames_out]
+        # true frequency (phase advance per hop)
+        true_freq = omega.unsqueeze(0).unsqueeze(-1) + phase_d # [B, F, T-1]
+        
+        # output tensors
+        mag_stretch = torch.zeros((B, freq, frames_out), dtype=mag.dtype, device=mag.device)
+        phase_stretch = torch.zeros((B, freq, frames_out), dtype=phase.dtype, device=mag.device)
 
-        # For each output frame j, we interpolate magnitude and compute phase progression
-        # We'll loop over frames_out (safe in TorchScript)
+        # use last_phase if available
+        if self.last_phase.numel() > 1 and self.last_phase.shape == (B, freq, 1):
+            phase_accum = self.last_phase.squeeze(-1) # [B, freq]
+        else: # first block
+            phase_accum = phase[..., 0]
+
+        # mapping from output time to input time
+        t_out = torch.arange(frames_out, device=mag.device, dtype=mag.dtype) * rate
+        
         for j in range(frames_out):
-            i0 = int(t0[j].item())
-            i1 = int(t1[j].item())
-            a = float(alpha[0,0,j].item())
-            # magnitude linear interpolation
-            mag0 = mag[..., i0]
-            mag1 = mag[..., i1]
-            mag_interp = (1.0 - a) * mag0 + a * mag1  # [B, freq]
+            t = t_out[j]
+            t_int = int(torch.floor(t))
+            alpha = t - t_int
+            
+            # magnitude interpolation
+            if t_int < frames - 1:
+                mag_stretch[..., j] = (1-alpha) * mag[..., t_int] + alpha * mag[..., t_int+1]
+            else:
+                mag_stretch[..., j] = mag[..., -1]
 
-            # phase progression
-            phi0 = phase[..., i0]
-            phi1 = phase[..., i1]
-            # delta phase
-            dp = phi1 - phi0 - omega.unsqueeze(0)  # broadcast omega [freq] -> [1,freq]
-            dp = _principal_angle(dp)
-            # predicted phase for new frame
-            phi = phi0 + omega.unsqueeze(0) + a * dp
+            # phase accumulation
+            phase_stretch[..., j] = phase_accum
 
-            mag_stretch[..., j] = mag_interp
-            phase_stretch[..., j] = phi
+            # update phase accumulator by interpolating true frequency
+            if t_int < frames - 2:
+                freq_interp = (1-alpha) * true_freq[..., t_int] + alpha * true_freq[..., t_int+1]
+            else:
+                freq_interp = true_freq[..., -1]
+            phase_accum += freq_interp
+
+        self.last_phase = phase_accum.unsqueeze(-1).clone()
 
         return mag_stretch, phase_stretch
 

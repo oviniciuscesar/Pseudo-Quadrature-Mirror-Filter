@@ -98,7 +98,7 @@ class ScriptablePitchShift(nn.Module):
         if squeeze_back:
             return x_out.squeeze(0)
         return x_out
-
+ 
 
 # --- Wrapper PQMF + Pitch Shifter com phase-vocoder---
 class PQMFPitchShiftWrapper(nn.Module):
