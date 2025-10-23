@@ -24,7 +24,7 @@ Applies a different phase-vocoder-based pitch shifter to every PQMF sub-band and
 
 `1-PitchShifterWrapper.py` creates a wrapper and exports TorchScript model compatible with conTorchionist
 
-`2-TestBlocks.py <audio file name> --block 4096 --overlap 2048` tests the exported model simulating a real-time processing scenario with overlapping blocks, and save the resulting audio files. You can change `--block` and `--overlap` to testing different scenarios (block processing and overlapping logic isn't working properly yet)
+`2-TestBlocks.py <audio_file_name> --block <block_size> --overlap <hop_size>` tests the exported model, simulating a real-time processing scenario with overlapping blocks and save the resulting audio files. You can change `--block` and `--overlap` to testing different scenarios (block processing and overlapping logic aren't working properly yet)
 
 ### Pitch shifter with torchaudio implementation:
 

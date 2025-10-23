@@ -40,7 +40,7 @@ class PitchShifter(nn.Module):
         return self.vocoder(x, self.n_steps)
 
 
-# --- Pitch shift TorchScript-friendly (resample-based) ---
+# --- Pitch shift TorchScript-friendly (não estou usando!!!) ---
 class ScriptablePitchShift(nn.Module):
     """
     Pitch shift simples por mudança de taxa (resample via F.interpolate).
@@ -100,7 +100,7 @@ class ScriptablePitchShift(nn.Module):
         return x_out
 
 
-# --- Wrapper PQMF + Pitch Shifter com phase-vocoder---
+# --- Wrapper PQMF -> sub-bands -> phase vocoder pitch Shifter -> signal reconstruction ---
 class PQMFPitchShiftWrapper(nn.Module):
     def __init__(self, attenuation=100, n_band=16, m_buffer_size=8192, sample_rate: int = 44100, shifts_in_semitones=None):
         super().__init__()

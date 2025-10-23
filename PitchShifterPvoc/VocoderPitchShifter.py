@@ -46,7 +46,7 @@ def _principal_angle(x: torch.Tensor) -> torch.Tensor:
     x = x - math.pi
     return x
 
-
+#---- PhaseVocoderPitchShift class ----#
 class PhaseVocoderPitchShift(nn.Module):
     def __init__(self, n_fft: int = 1024, hop_length: int = 256, win_length: int = 1024):
         super().__init__()
@@ -57,21 +57,20 @@ class PhaseVocoderPitchShift(nn.Module):
         win = torch.hann_window(self.win_length)
         self.register_buffer("window", win)
 
+    # STFT
     def _stft(self, x: torch.Tensor) -> torch.Tensor:
-        """Return real/imag stft: shape [B, freq, frames, 2]"""
+        """
+        Short-time Fourier transform.
+        - input: sub-band waveform
+        - Return real/imag stft: shape [batch, freq, frames, 2]
+        """
 
-        # defensive: ensure input length >= win_length to avoid empty frames / padding errors
+        # ensure input length >= win_length to avoid empty frames / padding errors
         if x.dim() == 1:
             x = x.unsqueeze(0)
         B, T = x.shape
         print("_stft: B=" + str(B) + " T=" + str(T) + " n_fft=" + str(self.n_fft) + " win_length=" + str(self.win_length) + " hop_length=" + str(self.hop_length))
-        # if T < 1:
-        #     # return an empty-shaped stft compatible tensor: [B, n_fft//2+1, 0, 2]
-        #     freq = self.n_fft // 2 + 1
-        #     return torch.zeros(B, freq, 0, 2, device=x.device, dtype=x.dtype)
-        # if T < self.win_length:
-        #     pad = int(self.win_length - T)
-        #     x = F.pad(x, (0, pad), mode="constant", value=0.0)
+        
         if T < max(1, self.n_fft):
             pad = int(max(1, self.n_fft) - T)
             print("_stft: padding input pad=" + str(pad))
@@ -89,9 +88,14 @@ class PhaseVocoderPitchShift(nn.Module):
             pad_mode="constant",
         )
 
+    # Inverse STFT
     def _istft(self, spec: torch.Tensor) -> torch.Tensor:
-        """Inverse stft. spec shape: [B, freq, frames, 2]"""
-        # debug
+        """
+        Inverse STFT
+        - input: real/imag stft [batch, freq, frames, 2]
+        - output: time-domain waveform [batch, T]
+        """
+        # debugando
         print("_istft: entering: spec.shape=" + str(list(spec.shape)) + " numel=" + str(spec.numel()))
 
         # empty frames -> fallback zeros
@@ -101,7 +105,7 @@ class PhaseVocoderPitchShift(nn.Module):
             print("_istft: empty spec -> returning zeros B=" + str(B) + " len=" + str(length))
             return torch.zeros(B, length, device=spec.device, dtype=torch.float32)
 
-        # converter stacked real/imag [B,F,T,2] para complexo [B,F,T]
+        # converter stacked real/imag [batch, freq, frames, 2] para complexo [batch, freq, frames]
         spec_c = spec
         if spec.dim() >= 4 and spec.size(-1) == 2:
             spec_c = torch.view_as_complex(spec)
@@ -113,12 +117,12 @@ class PhaseVocoderPitchShift(nn.Module):
         else:
             print("_istft: warning - spec_c not complex; shape=" + str(list(spec_c.shape)))
 
-        # Se somente 1 frame freq x 1, usar irfft direto como fallback (evita caminho interno problemático do istft)
+        # Se somente 1 frame freq x 1: usar irfft direto como fallback
         if spec_c.dim() >= 3 and spec_c.size(2) == 1:
-            # spec_c[..., :, 0] -> [B, F]
-            spec_frame = spec_c[..., 0]  # complex tensor shape [B, F]
+            # spec_c[..., :, 0] -> [batch, freq]
+            spec_frame = spec_c[..., 0]  # complex tensor shape [batch, freq]
             # irfft para reconstruir um quadro de comprimento n_fft
-            y_frame = torch.fft.irfft(spec_frame, n=self.n_fft)  # [B, n_fft], real
+            y_frame = torch.fft.irfft(spec_frame, n=self.n_fft)  # [batch, n_fft], real
             # cortar/centralizar para win_length (retornar comprimento plausível)
             if y_frame.dim() == 2:
                 out = y_frame[..., : int(self.win_length)]
@@ -296,7 +300,6 @@ class PhaseVocoderPitchShift(nn.Module):
         return y_out
 
 
-# tentativa de I/O: soundfile preferido, fallback para torchaudio
 try:
     import soundfile as sf  # pysoundfile
     HAS_SF = True
@@ -308,6 +311,7 @@ except Exception:
     except Exception:
         HAS_TORCHAUDIO = False
 
+# loads audio using soundfile or torchaudio
 def load_audio(path):
     if HAS_SF:
         data, sr = sf.read(path, dtype='float32')
@@ -323,6 +327,7 @@ def load_audio(path):
     else:
         raise RuntimeError("Nenhum backend de áudio disponível (instale soundfile ou torchaudio)")
 
+# saves audio using soundfile or torchaudio
 def save_audio(path, data, sr):
     if HAS_SF:
         sf.write(path, data.astype(np.float32), sr, subtype='PCM_16')
@@ -349,7 +354,7 @@ def main():
     x_np, sr = load_audio(args.input)
     print(f"Loaded {args.input}: {x_np.shape}, sr={sr}")
 
-    # prepara tensor [B, T]
+    # prepara tensor [batch, T]
     x_t = torch.from_numpy(x_np).unsqueeze(0)  # [1, T]
     sh = PhaseVocoderPitchShift(n_fft=args.n_fft, hop_length=args.hop_length, win_length=args.win_length)
     sh.eval()
@@ -370,16 +375,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
-# # Example quick test helper (not executed here, for user's local testing)
-
-# if __name__ == '__main__':
-#     import torch
-#     sh = PhaseVocoderPitchShift(n_fft=1024, hop_length=256, win_length=1024)
-#     x = torch.randn(1, 16000)
-#     with torch.no_grad():
-#         y = sh(x, n_steps=4)
-#     print(x.shape, y.shape)
-
