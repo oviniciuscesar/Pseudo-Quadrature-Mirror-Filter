@@ -54,8 +54,8 @@ class PhaseVocoderPitchShift(nn.Module):
         self.hop_length = int(hop_length)
         self.win_length = int(win_length)
         # window must be registered as buffer for TorchScript
-        win = torch.hann_window(self.win_length)
-        self.register_buffer("window", win)
+        window = torch.hann_window(self.win_length)
+        self.register_buffer("window", window)
 
     # STFT
     def _stft(self, x: torch.Tensor) -> torch.Tensor:
@@ -71,11 +71,17 @@ class PhaseVocoderPitchShift(nn.Module):
         B, T = x.shape
         print("_stft: B=" + str(B) + " T=" + str(T) + " n_fft=" + str(self.n_fft) + " win_length=" + str(self.win_length) + " hop_length=" + str(self.hop_length))
         
+        # se o tamanho da sub-banda for menor que n_fft, fazer padding à direita
         if T < max(1, self.n_fft):
             pad = int(max(1, self.n_fft) - T)
             print("_stft: padding input pad=" + str(pad))
             x = F.pad(x, (0, pad), mode="constant", value=0.0)
 
+        window = self.window
+        if window.device != x.device or window.dtype != x.dtype:
+            window = torch.hann_window(self.win_length, device=x.device, dtype=x.dtype)
+
+        # compute STFT
         return torch.stft(
             x,
             n_fft=self.n_fft,
@@ -83,7 +89,7 @@ class PhaseVocoderPitchShift(nn.Module):
             win_length=self.win_length,
             window=self.window,
             return_complex=False,
-            normalized=False,
+            normalized=True,
             center=True,
             pad_mode="constant",
         )
@@ -133,19 +139,19 @@ class PhaseVocoderPitchShift(nn.Module):
 
         # caso geral: usar torch.istft (janela válida)
         if self.window.numel() == 0:
-            window = torch.hann_window(int(self.win_length), device=spec.device, dtype=torch.float32)
+            self.window = torch.hann_window(int(self.win_length), device=spec.device, dtype=torch.float32)
             print("_istft: created fallback hann_window length=" + str(self.win_length))
         else:
             window = self.window
 
-        print("_istft: calling istft n_fft=" + str(self.n_fft) + " hop=" + str(self.hop_length) + " win_len=" + str(self.win_length) + " window_numel=" + str(window.numel()))
+        print("_istft: calling istft n_fft=" + str(self.n_fft) + " hop=" + str(self.hop_length) + " win_len=" + str(self.win_length) + " window_numel=" + str(self.window.numel()))
         out = torch.istft(
             spec_c,
             n_fft=self.n_fft,
             hop_length=self.hop_length,
             win_length=self.win_length,
-            window=window,
-            normalized=False,
+            window=self.window,
+            normalized=True,
         )
         print("_istft: istft succeeded out.shape=" + str(list(out.shape)))
         return out

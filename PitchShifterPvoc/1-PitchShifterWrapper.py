@@ -27,12 +27,12 @@ os.makedirs(out_audio, exist_ok=True)
 os.makedirs(out_torchscript, exist_ok=True)
 
 
-
+# --- Pitch Shifter usando Phase Vocoder ---
 class PitchShifter(nn.Module):
     def __init__(self, n_steps: int, n_fft: int = 4096, hop_length: int = 128, win_length: int = 1024, window_type: str = "hann"):
         super().__init__()
         self.n_steps = int(n_steps)
-        # instância do vocoder (torchscript-friendly)
+        # instância do vocoder (scriptável)
         self.vocoder = PhaseVocoderPitchShift(n_fft=n_fft, hop_length=hop_length, win_length=win_length)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
